@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "voicevox": {
+      "command": "npx",
+      "args": ["@t09tanaka/mcp-simple-voicevox"]
+    }
+  }
+}
