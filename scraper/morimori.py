@@ -86,17 +86,26 @@ async def scrape_category(page: Page, category_url: str, category: str) -> list[
             logger.error("カテゴリページ取得エラー: %s", e)
             break
 
-        # 商品リンクを収集
-        links = await page.query_selector_all("a[href*='/item/'], a[href*='/product/']")
-        hrefs = list({
-            await link.get_attribute("href")
-            for link in links
-            if await link.get_attribute("href")
-        })
-        logger.info("%d件の商品リンクを発見", len(hrefs))
+        # 商品リンクを収集（全内部リンクからカテゴリ・ページネーション以外を抽出）
+        all_links = await page.query_selector_all("a[href]")
+        hrefs = set()
+        for link in all_links:
+            href = await link.get_attribute("href")
+            if not href:
+                continue
+            full = href if href.startswith("http") else f"https://www.morimori-kaitori.jp{href}"
+            # カテゴリ・検索・ページ系を除外し商品ページと思われるものを収集
+            if (
+                "morimori-kaitori.jp" in full
+                and not any(x in full for x in ["/category/", "/search", "?page=", "#", "javascript"])
+                and full != category_url
+                and full.count("/") >= 4
+            ):
+                hrefs.add(full)
+        hrefs = list(hrefs)
+        logger.info("%d件の商品リンクを発見 (例: %s)", len(hrefs), hrefs[:2] if hrefs else [])
 
-        for href in hrefs:
-            full_url = href if href.startswith("http") else f"https://www.morimori-kaitori.jp{href}"
+        for full_url in hrefs:
             item = await scrape_item_page(page, full_url)
             if item:
                 item["category"] = category
