@@ -40,6 +40,20 @@ def extract_price(text: str) -> int:
     return int(m.group(0)) if m else 0
 
 
+def upsert_product(jan_code: str, name: str, category: str) -> str:
+    """products に upsert して product_id を返す"""
+    res = supabase.table("products").upsert(
+        {
+            "jan_code": jan_code,
+            "name": name[:200] if name else jan_code,
+            "category": category,
+            "updated_at": datetime.now(timezone.utc).isoformat(),
+        },
+        on_conflict="jan_code",
+    ).execute()
+    return res.data[0]["id"]
+
+
 async def scrape_item_page(page: Page, url: str) -> dict | None:
     """個別商品ページから情報を取得"""
     try:
@@ -148,13 +162,8 @@ def save_kaitori_prices(items: list[dict]) -> int:
         if price <= 0:
             continue
 
-        # products テーブルから product_id を検索
-        res = supabase.table("products").select("id").eq("jan_code", jan_code).execute()
-        if not res.data:
-            logger.debug("JANコード未登録: %s", jan_code)
-            continue
-
-        product_id = res.data[0]["id"]
+        # 楽天側が未取得でも保存できるよう products を補完する
+        product_id = upsert_product(jan_code, item.get("name", ""), item.get("category", ""))
 
         supabase.table("kaitori_prices").upsert(
             {
