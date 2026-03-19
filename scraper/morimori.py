@@ -81,7 +81,8 @@ async def scrape_category(page: Page, category_url: str, category: str) -> list[
     while current_url:
         logger.info("カテゴリページ取得: %s", current_url)
         try:
-            await page.goto(current_url, wait_until="domcontentloaded", timeout=30000)
+            await page.goto(current_url, wait_until="networkidle", timeout=30000)
+            await asyncio.sleep(2)
         except Exception as e:
             logger.error("カテゴリページ取得エラー: %s", e)
             break

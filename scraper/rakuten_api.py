@@ -21,25 +21,28 @@ RAKUTEN_APP_ID = os.environ["RAKUTEN_APP_ID"]
 RAKUTEN_SEARCH_URL = "https://app.rakuten.co.jp/services/api/IchibaItem/Search/20170706"
 
 # Nintendo Switch 関連ジャンル ID
-NINTENDO_SWITCH_GENRE_IDS = [
-    "563498",   # Nintendo Switch 本体
-    "563499",   # Nintendo Switch ソフト
+SEARCH_KEYWORDS = [
+    "Nintendo Switch 本体",
+    "Nintendo Switch ソフト",
 ]
 
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 
 
-def fetch_rakuten_items(genre_id: str, page: int = 1) -> dict:
+def fetch_rakuten_items(keyword: str, page: int = 1) -> dict:
     params = {
         "applicationId": RAKUTEN_APP_ID,
-        "genreId": genre_id,
+        "keyword": keyword,
         "hits": 30,
         "page": page,
         "sort": "-reviewCount",
         "availability": 1,
         "format": "json",
+        "NGKeyword": "中古",
     }
     resp = requests.get(RAKUTEN_SEARCH_URL, params=params, timeout=10)
+    if not resp.ok:
+        logger.error("APIレスポンス: %s", resp.text[:300])
     resp.raise_for_status()
     return resp.json()
 
@@ -91,15 +94,15 @@ def run(max_items: int = 100) -> None:
     logger.info("楽天API取得開始 (目標: %d件)", max_items)
     count = 0
 
-    for genre_id in NINTENDO_SWITCH_GENRE_IDS:
+    for keyword in SEARCH_KEYWORDS:
         if count >= max_items:
             break
 
         page = 1
         while count < max_items:
-            logger.info("genreId=%s page=%d 取得中...", genre_id, page)
+            logger.info("keyword='%s' page=%d 取得中...", keyword, page)
             try:
-                data = fetch_rakuten_items(genre_id, page)
+                data = fetch_rakuten_items(keyword, page)
             except requests.RequestException as e:
                 logger.error("APIエラー: %s", e)
                 break
