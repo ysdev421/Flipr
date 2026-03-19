@@ -17,6 +17,8 @@ logger = logging.getLogger(__name__)
 SUPABASE_URL = os.environ["SUPABASE_URL"]
 SUPABASE_KEY = os.environ["SUPABASE_SERVICE_ROLE_KEY"]
 RAKUTEN_APP_ID = os.environ["RAKUTEN_APP_ID"]
+RAKUTEN_ACCESS_KEY = os.environ["RAKUTEN_ACCESS_KEY"]
+RAKUTEN_AFFILIATE_ID = os.getenv("RAKUTEN_AFFILIATE_ID")
 
 RAKUTEN_SEARCH_URL = "https://app.rakuten.co.jp/services/api/IchibaItem/Search/20170706"
 
@@ -29,9 +31,21 @@ SEARCH_KEYWORDS = [
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 
 
+def validate_rakuten_credentials() -> None:
+    """
+    楽天APIの必須認証情報を検証する。
+    applicationId / accessKey は必須。
+    """
+    if not RAKUTEN_APP_ID:
+        raise ValueError("RAKUTEN_APP_ID が未設定です。")
+    if not RAKUTEN_ACCESS_KEY:
+        raise ValueError("RAKUTEN_ACCESS_KEY が未設定です。")
+
+
 def fetch_rakuten_items(keyword: str, page: int = 1) -> dict:
     params = {
         "applicationId": RAKUTEN_APP_ID,
+        "accessKey": RAKUTEN_ACCESS_KEY,
         "keyword": keyword,
         "hits": 30,
         "page": page,
@@ -40,6 +54,8 @@ def fetch_rakuten_items(keyword: str, page: int = 1) -> dict:
         "format": "json",
         "NGKeyword": "中古",
     }
+    if RAKUTEN_AFFILIATE_ID:
+        params["affiliateId"] = RAKUTEN_AFFILIATE_ID
     resp = requests.get(RAKUTEN_SEARCH_URL, params=params, timeout=10)
     if not resp.ok:
         logger.error("APIレスポンス: %s", resp.text[:300])
@@ -91,6 +107,7 @@ def calc_real_price(price: int, point_rate: float) -> int:
 
 
 def run(max_items: int = 100) -> None:
+    validate_rakuten_credentials()
     logger.info("楽天API取得開始 (目標: %d件)", max_items)
     count = 0
 
@@ -105,6 +122,13 @@ def run(max_items: int = 100) -> None:
                 data = fetch_rakuten_items(keyword, page)
             except requests.RequestException as e:
                 logger.error("APIエラー: %s", e)
+                if hasattr(e, "response") and e.response is not None:
+                    body = e.response.text[:500]
+                    if "wrong_parameter" in body or "invalid_token" in body:
+                        logger.error(
+                            "楽天API認証情報が無効の可能性があります。"
+                            "RAKUTEN_APP_ID / RAKUTEN_ACCESS_KEY を見直してください。"
+                        )
                 break
 
             items = data.get("Items", [])

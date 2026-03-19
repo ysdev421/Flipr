@@ -8,6 +8,7 @@ import logging
 import os
 import re
 from datetime import datetime, timezone
+from urllib.parse import urljoin
 
 from playwright.async_api import async_playwright, Page
 from supabase import create_client, Client
@@ -45,7 +46,6 @@ async def scrape_item_page(page: Page, url: str) -> dict | None:
         await page.goto(url, wait_until="domcontentloaded", timeout=30000)
         await asyncio.sleep(1)
 
-        content = await page.content()
         jan_code = extract_jan(await page.inner_text("body"))
         if not jan_code:
             return None
@@ -83,28 +83,41 @@ async def scrape_category(page: Page, category_url: str, category: str) -> list[
         try:
             await page.goto(current_url, wait_until="networkidle", timeout=30000)
             await asyncio.sleep(2)
+            try:
+                await page.wait_for_selector("a[href*='/product/']", timeout=8000)
+            except Exception:
+                # セレクタで見つからない環境向けに後続でHTMLフォールバックする
+                pass
         except Exception as e:
             logger.error("カテゴリページ取得エラー: %s", e)
             break
 
-        # 商品リンクを収集（全内部リンクからカテゴリ・ページネーション以外を抽出）
-        all_links = await page.query_selector_all("a[href]")
+        # 商品リンクを収集（森森の商品URL形式: /category/<id>/product/<id>）
+        all_links = await page.query_selector_all("a[href*='/product/']")
         hrefs = set()
         for link in all_links:
             href = await link.get_attribute("href")
             if not href:
                 continue
-            full = href if href.startswith("http") else f"https://www.morimori-kaitori.jp{href}"
-            # カテゴリ・検索・ページ系を除外し商品ページと思われるものを収集
-            if (
-                "morimori-kaitori.jp" in full
-                and not any(x in full for x in ["/category/", "/search", "?page=", "#", "javascript"])
-                and full != category_url
-                and full.count("/") >= 4
-            ):
+            full = urljoin("https://www.morimori-kaitori.jp", href)
+            if "/product/" in full and "morimori-kaitori.jp" in full:
                 hrefs.add(full)
+
+        # フォールバック: HTML文字列からリンクを抽出
+        if not hrefs:
+            html = await page.content()
+            for path in re.findall(r"""['"](/category/\d+/product/\d+)['"]""", html):
+                hrefs.add(urljoin("https://www.morimori-kaitori.jp", path))
+
         hrefs = list(hrefs)
-        logger.info("%d件の商品リンクを発見 (例: %s)", len(hrefs), hrefs[:2] if hrefs else [])
+        if hrefs:
+            logger.info("%d件の商品リンクを発見 (例: %s)", len(hrefs), hrefs[:2])
+        else:
+            logger.info(
+                "0件の商品リンクを発見 (title=%s url=%s)",
+                await page.title(),
+                current_url,
+            )
 
         for full_url in hrefs:
             item = await scrape_item_page(page, full_url)
@@ -162,10 +175,15 @@ async def run() -> None:
     logger.info("森森買取スクレイピング開始")
     async with async_playwright() as pw:
         browser = await pw.chromium.launch(headless=True)
-        page = await browser.new_page()
-        await page.set_extra_http_headers({
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
-        })
+        context = await browser.new_context(
+            user_agent=(
+                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                "AppleWebKit/537.36 (KHTML, like Gecko) "
+                "Chrome/123.0.0.0 Safari/537.36"
+            ),
+            locale="ja-JP",
+        )
+        page = await context.new_page()
 
         all_items: list[dict] = []
         for url, category in CATEGORY_URLS:
@@ -173,6 +191,7 @@ async def run() -> None:
             all_items.extend(items)
             await asyncio.sleep(3)
 
+        await context.close()
         await browser.close()
 
     logger.info("スクレイピング完了: %d件", len(all_items))
